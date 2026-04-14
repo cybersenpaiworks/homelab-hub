@@ -13,8 +13,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - nginx-proxy-manager_default
+      - proxy-network
 
 networks:
-  nginx-proxy-manager_default:
+  proxy-network:
     external: true
+    name: proxy-network
