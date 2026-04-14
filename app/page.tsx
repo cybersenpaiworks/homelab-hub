@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Service, ServiceUrlSource } from "@/types/service";
 
 type FetchState = {
@@ -48,6 +48,8 @@ function getUrlSourceCopy(urlSource: ServiceUrlSource) {
 export default function Home() {
   const [services, setServices] = useState<Service[]>([]);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [controlsServiceId, setControlsServiceId] = useState<string | null>(null);
+  const [holdServiceId, setHoldServiceId] = useState<string | null>(null);
   const [urlDraft, setUrlDraft] = useState("");
   const [saveState, setSaveState] = useState<SaveState>({
     error: null,
@@ -58,6 +60,14 @@ export default function Home() {
     loading: true,
     updatedAt: null,
   });
+  const holdTimerRef = useRef<number | null>(null);
+
+  const clearHoldTimer = useCallback(() => {
+    if (holdTimerRef.current !== null) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  }, []);
 
   const loadServices = useCallback(async () => {
     setFetchState((current) => ({ ...current, loading: true, error: null }));
@@ -102,6 +112,7 @@ export default function Home() {
 
   const startEditing = useCallback((service: Service) => {
     setEditingServiceId(service.id);
+    setControlsServiceId(service.id);
     setUrlDraft(service.url || service.autoUrl || "");
     setSaveState({ error: null, serviceId: null });
   }, []);
@@ -111,6 +122,40 @@ export default function Home() {
     setUrlDraft("");
     setSaveState({ error: null, serviceId: null });
   }, []);
+
+  const openControlsWithDelay = useCallback(
+    (serviceId: string) => {
+      clearHoldTimer();
+      setHoldServiceId(serviceId);
+
+      holdTimerRef.current = window.setTimeout(() => {
+        setControlsServiceId(serviceId);
+        setHoldServiceId(null);
+        holdTimerRef.current = null;
+      }, 5000);
+    },
+    [clearHoldTimer],
+  );
+
+  const cancelControlsDelay = useCallback(
+    (serviceId: string) => {
+      if (holdServiceId === serviceId) {
+        clearHoldTimer();
+        setHoldServiceId(null);
+      }
+    },
+    [clearHoldTimer, holdServiceId],
+  );
+
+  const closeControls = useCallback(() => {
+    setControlsServiceId(null);
+    setHoldServiceId(null);
+    clearHoldTimer();
+
+    if (editingServiceId) {
+      cancelEditing();
+    }
+  }, [cancelEditing, clearHoldTimer, editingServiceId]);
 
   const saveManualUrl = useCallback(async () => {
     if (!editingService) {
@@ -139,6 +184,7 @@ export default function Home() {
 
       await loadServices();
       cancelEditing();
+      setControlsServiceId(editingService.id);
     } catch (error) {
       setSaveState({
         error:
@@ -175,9 +221,9 @@ export default function Home() {
 
         if (editingServiceId === serviceId) {
           cancelEditing();
-        } else {
-          setSaveState({ error: null, serviceId: null });
         }
+
+        setSaveState({ error: null, serviceId: null });
       } catch (error) {
         setSaveState({
           error:
@@ -198,8 +244,11 @@ export default function Home() {
       void loadServices();
     }, 30000);
 
-    return () => window.clearInterval(interval);
-  }, [loadServices]);
+    return () => {
+      window.clearInterval(interval);
+      clearHoldTimer();
+    };
+  }, [clearHoldTimer, loadServices]);
 
   return (
     <main className="min-h-screen bg-transparent px-6 py-10 text-slate-100 sm:px-10 lg:px-12">
@@ -294,37 +343,50 @@ export default function Home() {
             const isReady = Boolean(service.url);
             const urlSource = getUrlSourceCopy(service.urlSource);
             const isEditing = editingServiceId === service.id;
+            const areControlsOpen = controlsServiceId === service.id;
+            const isHolding = holdServiceId === service.id;
             const isSaving = saveState.serviceId === service.id;
 
             return (
               <article
                 className={[
-                  "group relative overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
+                  "group relative rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
                   isReady
                     ? "hover:-translate-y-1 hover:border-sky-300/30 hover:bg-slate-900/90 hover:shadow-glow"
-                    : "opacity-80",
+                    : "opacity-85",
                 ].join(" ")}
                 key={service.id}
               >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
-                <div className="relative flex h-full flex-col gap-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-3xl shadow-inner shadow-black/20">
+                {isReady ? (
+                  <a
+                    aria-label={`Abrir ${service.name}`}
+                    className="absolute inset-0 z-0 rounded-[28px]"
+                    href={service.url}
+                    rel="noreferrer"
+                    target="_blank"
+                  />
+                ) : null}
+
+                <div className="absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
+
+                <div className="relative z-10 flex h-full flex-col gap-5 pointer-events-none">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex min-w-0 items-start gap-4">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-3xl shadow-inner shadow-black/20">
                         <span aria-hidden="true">{service.icon}</span>
                       </div>
 
-                      <div>
+                      <div className="min-w-0">
                         <h2 className="text-xl font-semibold text-white">
                           {service.name}
                         </h2>
-                        <p className="mt-1 text-sm text-slate-400">
+                        <p className="mt-1 break-all text-sm text-slate-400">
                           {service.url || "URL nao configurada"}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 xl:max-w-[42%] xl:justify-end">
                       <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-slate-300">
                         <span
                           className={`h-2.5 w-2.5 rounded-full ${getStatusStyle(service.status)}`}
@@ -363,107 +425,119 @@ export default function Home() {
                   </div>
 
                   <div className="mt-auto flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
-                        onClick={() => startEditing(service)}
-                        type="button"
-                      >
-                        Editar URL
-                      </button>
-                      <button
-                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                        disabled={service.urlSource !== "manual" || isSaving}
-                        onClick={() => void resetToAutomaticUrl(service.id)}
-                        type="button"
-                      >
-                        Usar automatico
-                      </button>
-                    </div>
+                    <span className="text-slate-400">
+                      {isReady ? "Clique em qualquer area do card para abrir." : "Configure uma URL para ativar o acesso."}
+                    </span>
 
-                    <a
-                      className={[
-                        "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium transition",
-                        isReady
-                          ? "border border-sky-400/30 bg-sky-400/10 text-sky-100 hover:border-sky-300/50 hover:bg-sky-400/20"
-                          : "cursor-not-allowed border border-white/10 bg-white/5 text-slate-500",
-                      ].join(" ")}
-                      href={isReady ? service.url : "#"}
+                    <button
+                      className="pointer-events-auto rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
+                      onMouseEnter={() => openControlsWithDelay(service.id)}
+                      onMouseLeave={() => cancelControlsDelay(service.id)}
                       onClick={(event) => {
-                        if (!isReady) {
-                          event.preventDefault();
-                        }
+                        event.preventDefault();
+                        event.stopPropagation();
                       }}
-                      rel="noreferrer"
-                      target="_blank"
+                      type="button"
                     >
-                      Acessar
-                    </a>
+                      {isHolding ? "Segure para configurar..." : "Configurar"}
+                    </button>
                   </div>
 
-                  {isEditing ? (
-                    <div className="rounded-[24px] border border-sky-400/20 bg-sky-400/10 p-4">
+                  {areControlsOpen ? (
+                    <div className="pointer-events-auto rounded-[24px] border border-sky-400/20 bg-sky-400/10 p-4">
                       <div className="space-y-3">
-                        <div>
-                          <p className="text-sm font-semibold text-white">
-                            Editar URL do servico
-                          </p>
-                          <p className="mt-1 text-sm text-slate-300">
-                            Se voce informar apenas o dominio, o hub usa
-                            `https://` automaticamente.
-                          </p>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              Configuracao de URL
+                            </p>
+                            <p className="mt-1 text-sm text-slate-300">
+                              O card continua priorizando o proxy reverso automaticamente, mas voce pode sobrescrever a URL manualmente.
+                            </p>
+                          </div>
+
+                          <button
+                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+                            onClick={closeControls}
+                            type="button"
+                          >
+                            Fechar
+                          </button>
                         </div>
-
-                        <label className="block">
-                          <span className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-400">
-                            URL manual
-                          </span>
-                          <input
-                            className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
-                            onChange={(event) => setUrlDraft(event.target.value)}
-                            placeholder={
-                              service.autoUrl ||
-                              "https://servico.seudominio.com.br"
-                            }
-                            value={urlDraft}
-                          />
-                        </label>
-
-                        {service.autoUrl ? (
-                          <p className="break-all text-xs text-slate-400">
-                            URL automatica detectada: {service.autoUrl}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-slate-400">
-                            Dica: use `hub.url=https://app.seudominio.com.br`
-                            ou `hub.host=app.seudominio.com.br` para priorizar
-                            o proxy reverso.
-                          </p>
-                        )}
-
-                        {saveState.error && saveState.serviceId === service.id ? (
-                          <p className="text-sm text-rose-200">
-                            {saveState.error}
-                          </p>
-                        ) : null}
 
                         <div className="flex flex-wrap gap-2">
                           <button
-                            className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={isSaving || !urlDraft.trim()}
-                            onClick={() => void saveManualUrl()}
+                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
+                            onClick={() => startEditing(service)}
                             type="button"
                           >
-                            {isSaving ? "Salvando..." : "Salvar URL"}
+                            Editar URL
                           </button>
                           <button
-                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-                            onClick={cancelEditing}
+                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={service.urlSource !== "manual" || isSaving}
+                            onClick={() => void resetToAutomaticUrl(service.id)}
                             type="button"
                           >
-                            Cancelar
+                            Usar automatico
                           </button>
                         </div>
+
+                        {isEditing ? (
+                          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                            <div className="space-y-3">
+                              <label className="block">
+                                <span className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-400">
+                                  URL manual
+                                </span>
+                                <input
+                                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
+                                  onChange={(event) => setUrlDraft(event.target.value)}
+                                  placeholder={
+                                    service.autoUrl ||
+                                    "https://servico.seudominio.com.br"
+                                  }
+                                  value={urlDraft}
+                                />
+                              </label>
+
+                              {service.autoUrl ? (
+                                <p className="break-all text-xs text-slate-400">
+                                  URL automatica detectada: {service.autoUrl}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-slate-400">
+                                  Dica: use `hub.url=https://app.seudominio.com.br` ou `hub.host=app.seudominio.com.br` para priorizar o proxy reverso.
+                                </p>
+                              )}
+
+                              {saveState.error &&
+                              saveState.serviceId === service.id ? (
+                                <p className="text-sm text-rose-200">
+                                  {saveState.error}
+                                </p>
+                              ) : null}
+
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={isSaving || !urlDraft.trim()}
+                                  onClick={() => void saveManualUrl()}
+                                  type="button"
+                                >
+                                  {isSaving ? "Salvando..." : "Salvar URL"}
+                                </button>
+                                <button
+                                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+                                  onClick={cancelEditing}
+                                  type="button"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
