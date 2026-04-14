@@ -13,6 +13,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/cybersenpai/docker-data/homelab-hub:/app/data
+    labels:
+      hub.enable: "true"
+      hub.name: "Homelab Hub"
+      hub.host: "hub.cybersenpaiworks.com.br"
+      hub.scheme: "https"
+      hub.icon: "🧪"
+      hub.description: "Dashboard central para descoberta automatica dos servicos Docker."
     networks:
       - proxy-network
 
