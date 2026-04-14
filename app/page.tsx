@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { Service } from "@/types/service";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Service, ServiceUrlSource } from "@/types/service";
 
 type FetchState = {
   error: string | null;
   loading: boolean;
   updatedAt: string | null;
+};
+
+type SaveState = {
+  error: string | null;
+  serviceId: string | null;
 };
 
 function getStatusStyle(status: string) {
@@ -15,8 +20,39 @@ function getStatusStyle(status: string) {
     : "bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.65)]";
 }
 
+function getUrlSourceCopy(urlSource: ServiceUrlSource) {
+  switch (urlSource) {
+    case "manual":
+      return {
+        label: "Manual",
+        tone: "border-amber-400/30 bg-amber-400/10 text-amber-100",
+      };
+    case "label":
+      return {
+        label: "Label",
+        tone: "border-sky-400/30 bg-sky-400/10 text-sky-100",
+      };
+    case "derived":
+      return {
+        label: "Proxy",
+        tone: "border-emerald-400/30 bg-emerald-400/10 text-emerald-100",
+      };
+    default:
+      return {
+        label: "Sem URL",
+        tone: "border-white/10 bg-white/5 text-slate-300",
+      };
+  }
+}
+
 export default function Home() {
   const [services, setServices] = useState<Service[]>([]);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [urlDraft, setUrlDraft] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>({
+    error: null,
+    serviceId: null,
+  });
   const [fetchState, setFetchState] = useState<FetchState>({
     error: null,
     loading: true,
@@ -35,7 +71,7 @@ export default function Home() {
 
       if (!response.ok) {
         throw new Error(
-          payload?.detail || payload?.error || "Falha ao carregar os serviços.",
+          payload?.detail || payload?.error || "Falha ao carregar os servicos.",
         );
       }
 
@@ -59,6 +95,102 @@ export default function Home() {
     }
   }, []);
 
+  const editingService = useMemo(
+    () => services.find((service) => service.id === editingServiceId) ?? null,
+    [editingServiceId, services],
+  );
+
+  const startEditing = useCallback((service: Service) => {
+    setEditingServiceId(service.id);
+    setUrlDraft(service.url || service.autoUrl || "");
+    setSaveState({ error: null, serviceId: null });
+  }, []);
+
+  const cancelEditing = useCallback(() => {
+    setEditingServiceId(null);
+    setUrlDraft("");
+    setSaveState({ error: null, serviceId: null });
+  }, []);
+
+  const saveManualUrl = useCallback(async () => {
+    if (!editingService) {
+      return;
+    }
+
+    setSaveState({ error: null, serviceId: editingService.id });
+
+    try {
+      const response = await fetch("/api/services", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          serviceId: editingService.id,
+          url: urlDraft,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Falha ao salvar a URL manual.");
+      }
+
+      await loadServices();
+      cancelEditing();
+    } catch (error) {
+      setSaveState({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Falha inesperada ao salvar a URL manual.",
+        serviceId: editingService.id,
+      });
+    }
+  }, [cancelEditing, editingService, loadServices, urlDraft]);
+
+  const resetToAutomaticUrl = useCallback(
+    async (serviceId: string) => {
+      setSaveState({ error: null, serviceId });
+
+      try {
+        const response = await fetch("/api/services", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ serviceId }),
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error || "Falha ao restaurar a URL automatica.",
+          );
+        }
+
+        await loadServices();
+
+        if (editingServiceId === serviceId) {
+          cancelEditing();
+        } else {
+          setSaveState({ error: null, serviceId: null });
+        }
+      } catch (error) {
+        setSaveState({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Falha inesperada ao restaurar a URL automatica.",
+          serviceId,
+        });
+      }
+    },
+    [cancelEditing, editingServiceId, loadServices],
+  );
+
   useEffect(() => {
     void loadServices();
 
@@ -80,11 +212,12 @@ export default function Home() {
               </span>
               <div className="space-y-3">
                 <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                  Painel central para os serviços do seu servidor Docker
+                  Painel central para os servicos do seu servidor Docker
                 </h1>
                 <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-                  Descoberta automática por labels, visão operacional imediata e
-                  acesso rápido aos containers que importam.
+                  Descoberta automatica por labels, prioridade para o proxy
+                  reverso e override manual quando voce precisar corrigir uma
+                  URL sem recriar o container.
                 </p>
               </div>
             </div>
@@ -92,7 +225,7 @@ export default function Home() {
             <div className="flex flex-wrap items-center gap-3">
               <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
                 <span className="block text-xs uppercase tracking-[0.24em] text-slate-500">
-                  Serviços
+                  Servicos
                 </span>
                 <span className="mt-1 block text-2xl font-semibold text-white">
                   {services.length}
@@ -101,7 +234,7 @@ export default function Home() {
 
               <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
                 <span className="block text-xs uppercase tracking-[0.24em] text-slate-500">
-                  Última leitura
+                  Ultima leitura
                 </span>
                 <span className="mt-1 block text-sm font-medium text-white">
                   {fetchState.updatedAt ?? "Aguardando"}
@@ -159,24 +292,19 @@ export default function Home() {
 
           {services.map((service) => {
             const isReady = Boolean(service.url);
+            const urlSource = getUrlSourceCopy(service.urlSource);
+            const isEditing = editingServiceId === service.id;
+            const isSaving = saveState.serviceId === service.id;
 
             return (
-              <a
+              <article
                 className={[
                   "group relative overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
                   isReady
                     ? "hover:-translate-y-1 hover:border-sky-300/30 hover:bg-slate-900/90 hover:shadow-glow"
-                    : "cursor-not-allowed opacity-70",
+                    : "opacity-80",
                 ].join(" ")}
-                href={isReady ? service.url : "#"}
                 key={service.id}
-                onClick={(event) => {
-                  if (!isReady) {
-                    event.preventDefault();
-                  }
-                }}
-                rel="noreferrer"
-                target="_blank"
               >
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
                 <div className="relative flex h-full flex-col gap-5">
@@ -191,31 +319,156 @@ export default function Home() {
                           {service.name}
                         </h2>
                         <p className="mt-1 text-sm text-slate-400">
-                          {service.url || "URL não configurada"}
+                          {service.url || "URL nao configurada"}
                         </p>
                       </div>
                     </div>
 
-                    <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-slate-300">
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-slate-300">
+                        <span
+                          className={`h-2.5 w-2.5 rounded-full ${getStatusStyle(service.status)}`}
+                        />
+                        {service.status}
+                      </span>
                       <span
-                        className={`h-2.5 w-2.5 rounded-full ${getStatusStyle(service.status)}`}
-                      />
-                      {service.status}
-                    </span>
+                        className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${urlSource.tone}`}
+                      >
+                        {urlSource.label}
+                      </span>
+                    </div>
                   </div>
 
                   <p className="text-sm leading-7 text-slate-300">
                     {service.description}
                   </p>
 
-                  <div className="mt-auto flex items-center justify-between text-sm text-slate-400">
-                    <span>Nova aba</span>
-                    <span className="text-sky-200 transition group-hover:text-sky-100">
-                      Acessar
-                    </span>
+                  <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
+                      URL efetiva
+                    </p>
+                    <p className="mt-2 break-all text-sm text-slate-200">
+                      {service.url || "URL nao configurada"}
+                    </p>
+                    {service.autoUrl ? (
+                      <p className="mt-2 break-all text-xs text-slate-400">
+                        Automatico: {service.autoUrl}
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Defina `hub.url` ou `hub.host`/`hub.domain` para usar a
+                        URL do proxy reverso automaticamente.
+                      </p>
+                    )}
                   </div>
+
+                  <div className="mt-auto flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
+                        onClick={() => startEditing(service)}
+                        type="button"
+                      >
+                        Editar URL
+                      </button>
+                      <button
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={service.urlSource !== "manual" || isSaving}
+                        onClick={() => void resetToAutomaticUrl(service.id)}
+                        type="button"
+                      >
+                        Usar automatico
+                      </button>
+                    </div>
+
+                    <a
+                      className={[
+                        "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium transition",
+                        isReady
+                          ? "border border-sky-400/30 bg-sky-400/10 text-sky-100 hover:border-sky-300/50 hover:bg-sky-400/20"
+                          : "cursor-not-allowed border border-white/10 bg-white/5 text-slate-500",
+                      ].join(" ")}
+                      href={isReady ? service.url : "#"}
+                      onClick={(event) => {
+                        if (!isReady) {
+                          event.preventDefault();
+                        }
+                      }}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Acessar
+                    </a>
+                  </div>
+
+                  {isEditing ? (
+                    <div className="rounded-[24px] border border-sky-400/20 bg-sky-400/10 p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">
+                            Editar URL do servico
+                          </p>
+                          <p className="mt-1 text-sm text-slate-300">
+                            Se voce informar apenas o dominio, o hub usa
+                            `https://` automaticamente.
+                          </p>
+                        </div>
+
+                        <label className="block">
+                          <span className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-400">
+                            URL manual
+                          </span>
+                          <input
+                            className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
+                            onChange={(event) => setUrlDraft(event.target.value)}
+                            placeholder={
+                              service.autoUrl ||
+                              "https://servico.seudominio.com.br"
+                            }
+                            value={urlDraft}
+                          />
+                        </label>
+
+                        {service.autoUrl ? (
+                          <p className="break-all text-xs text-slate-400">
+                            URL automatica detectada: {service.autoUrl}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-slate-400">
+                            Dica: use `hub.url=https://app.seudominio.com.br`
+                            ou `hub.host=app.seudominio.com.br` para priorizar
+                            o proxy reverso.
+                          </p>
+                        )}
+
+                        {saveState.error && saveState.serviceId === service.id ? (
+                          <p className="text-sm text-rose-200">
+                            {saveState.error}
+                          </p>
+                        ) : null}
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isSaving || !urlDraft.trim()}
+                            onClick={() => void saveManualUrl()}
+                            type="button"
+                          >
+                            {isSaving ? "Salvando..." : "Salvar URL"}
+                          </button>
+                          <button
+                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+                            onClick={cancelEditing}
+                            type="button"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </a>
+              </article>
             );
           })}
 
@@ -223,13 +476,31 @@ export default function Home() {
             <div className="sm:col-span-2 xl:col-span-3">
               <div className="rounded-[28px] border border-dashed border-white/10 bg-slate-900/60 p-10 text-center backdrop-blur">
                 <p className="text-sm font-semibold uppercase tracking-[0.26em] text-slate-500">
-                  Nenhum serviço encontrado
+                  Nenhum servico encontrado
                 </p>
                 <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-300">
-                  Adicione as labels <code className="rounded bg-white/5 px-1.5 py-0.5">hub.enable=true</code>,{" "}
-                  <code className="rounded bg-white/5 px-1.5 py-0.5">hub.name</code> e{" "}
-                  <code className="rounded bg-white/5 px-1.5 py-0.5">hub.url</code> aos seus containers para
-                  exibi-los aqui.
+                  Adicione as labels{" "}
+                  <code className="rounded bg-white/5 px-1.5 py-0.5">
+                    hub.enable=true
+                  </code>
+                  ,{" "}
+                  <code className="rounded bg-white/5 px-1.5 py-0.5">
+                    hub.name
+                  </code>{" "}
+                  e{" "}
+                  <code className="rounded bg-white/5 px-1.5 py-0.5">
+                    hub.url
+                  </code>{" "}
+                  aos seus containers. Se preferir derivar a URL publica do
+                  proxy reverso, use{" "}
+                  <code className="rounded bg-white/5 px-1.5 py-0.5">
+                    hub.host
+                  </code>{" "}
+                  ou{" "}
+                  <code className="rounded bg-white/5 px-1.5 py-0.5">
+                    hub.domain
+                  </code>
+                  .
                 </p>
               </div>
             </div>

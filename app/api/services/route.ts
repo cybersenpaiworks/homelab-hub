@@ -1,50 +1,12 @@
-import Docker from "dockerode";
 import { NextResponse } from "next/server";
-import type { Service } from "@/types/service";
+import { listServices, resetManualServiceUrl, updateManualServiceUrl } from "@/lib/services";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const docker = new Docker({ socketPath: "/var/run/docker.sock" });
-
-function getContainerName(names?: string[]) {
-  return names?.[0]?.replace(/^\//, "") ?? "container-sem-nome";
-}
-
 export async function GET() {
   try {
-    const containers = await docker.listContainers({ all: true });
-
-    const services: Service[] = containers
-      .filter((container) => container.Labels?.["hub.enable"] === "true")
-      .map((container) => {
-        const labels = container.Labels ?? {};
-
-        return {
-          id: container.Id,
-          name: labels["hub.name"] || getContainerName(container.Names),
-          url: labels["hub.url"] || "",
-          icon: labels["hub.icon"] || "📦",
-          description: labels["hub.description"] || "Serviço descoberto automaticamente via Docker.",
-          status: container.State || "unknown",
-        };
-      })
-      .sort((left, right) => {
-        if (left.status === right.status) {
-          return left.name.localeCompare(right.name, "pt-BR");
-        }
-
-        if (left.status === "running") {
-          return -1;
-        }
-
-        if (right.status === "running") {
-          return 1;
-        }
-
-        return left.name.localeCompare(right.name, "pt-BR");
-      });
-
+    const services = await listServices();
     return NextResponse.json(services);
   } catch (error) {
     console.error("Failed to load Docker services", error);
@@ -58,19 +20,86 @@ export async function GET() {
         : undefined;
 
     const detailByCode: Record<string, string> = {
-      EACCES: "Permissão negada para acessar o Docker socket.",
-      ENOENT: "Docker socket não encontrado em /var/run/docker.sock.",
-      ECONNREFUSED: "Não foi possível conectar ao daemon Docker.",
+      EACCES: "Permissao negada para acessar o Docker socket.",
+      ENOENT: "Docker socket nao encontrado em /var/run/docker.sock.",
+      ECONNREFUSED: "Nao foi possivel conectar ao daemon Docker.",
     };
 
     return NextResponse.json(
       {
-        error: "Falha ao descobrir serviços do Docker.",
+        error: "Falha ao descobrir servicos do Docker.",
         detail:
           (code && detailByCode[code]) ||
-          "Verifique se o socket do Docker está montado e acessível pelo container.",
+          "Verifique se o socket do Docker esta montado e acessivel pelo container.",
       },
       { status: 500 },
     );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      serviceId?: string;
+      url?: string;
+    };
+
+    if (!body.serviceId || !body.url?.trim()) {
+      return NextResponse.json(
+        { error: "serviceId e url sao obrigatorios." },
+        { status: 400 },
+      );
+    }
+
+    const service = await updateManualServiceUrl(body.serviceId, body.url);
+
+    if (!service) {
+      return NextResponse.json(
+        { error: "Servico nao encontrado para atualizar a URL." },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json(service);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Falha ao salvar a URL manual do servico.";
+
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      serviceId?: string;
+    };
+
+    if (!body.serviceId) {
+      return NextResponse.json(
+        { error: "serviceId e obrigatorio." },
+        { status: 400 },
+      );
+    }
+
+    const service = await resetManualServiceUrl(body.serviceId);
+
+    if (!service) {
+      return NextResponse.json(
+        { error: "Servico nao encontrado para restaurar a URL automatica." },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json(service);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Falha ao restaurar a URL automatica do servico.";
+
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
