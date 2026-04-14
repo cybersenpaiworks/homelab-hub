@@ -1,7 +1,9 @@
 .git
+.codex
 .next
 node_modules
 npm-debug.log*
+.env*
 docker-compose.yml
 README.md
-data/service-overrides.json
+data
