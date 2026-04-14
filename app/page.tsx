@@ -350,7 +350,7 @@ export default function Home() {
             return (
               <article
                 className={[
-                  "group relative rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
+                  "group relative overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
                   isReady
                     ? "hover:-translate-y-1 hover:border-sky-300/30 hover:bg-slate-900/90 hover:shadow-glow"
                     : "opacity-85",
@@ -367,7 +367,7 @@ export default function Home() {
                   />
                 ) : null}
 
-                <div className="absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
+                <div className="pointer-events-none absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
 
                 <div className="relative z-10 flex h-full flex-col gap-5 pointer-events-none">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
