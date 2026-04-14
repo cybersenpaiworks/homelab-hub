@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { listServices, resetManualServiceUrl, updateManualServiceUrl } from "@/lib/services";
+import {
+  hideMissingService,
+  listServices,
+  removeServiceState,
+  reorderServices,
+  resetManualServiceUrl,
+  updateManualServiceUrl,
+} from "@/lib/services";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,6 +106,71 @@ export async function DELETE(request: Request) {
       error instanceof Error
         ? error.message
         : "Falha ao restaurar a URL automatica do servico.";
+
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      action?: "hide" | "remove" | "reorder";
+      serviceId?: string;
+      orderedServiceIds?: string[];
+    };
+
+    if (body.action === "reorder") {
+      if (!Array.isArray(body.orderedServiceIds) || body.orderedServiceIds.length === 0) {
+        return NextResponse.json(
+          { error: "orderedServiceIds e obrigatorio para reordenar." },
+          { status: 400 },
+        );
+      }
+
+      const services = await reorderServices(body.orderedServiceIds);
+      return NextResponse.json(services);
+    }
+
+    if (!body.serviceId) {
+      return NextResponse.json(
+        { error: "serviceId e obrigatorio." },
+        { status: 400 },
+      );
+    }
+
+    if (body.action === "hide") {
+      const ok = await hideMissingService(body.serviceId);
+
+      if (!ok) {
+        return NextResponse.json(
+          { error: "Servico ausente nao encontrado para esconder." },
+          { status: 404 },
+        );
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === "remove") {
+      const ok = await removeServiceState(body.serviceId);
+
+      if (!ok) {
+        return NextResponse.json(
+          { error: "Servico nao encontrado para remover." },
+          { status: 404 },
+        );
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json(
+      { error: "Acao invalida." },
+      { status: 400 },
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Falha ao aplicar a alteracao.";
 
     return NextResponse.json({ error: message }, { status: 400 });
   }

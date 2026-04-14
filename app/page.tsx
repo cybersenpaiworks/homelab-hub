@@ -14,10 +14,23 @@ type SaveState = {
   serviceId: string | null;
 };
 
-function getStatusStyle(status: string) {
-  return status === "running"
-    ? "bg-emerald-400 shadow-[0_0_18px_rgba(74,222,128,0.75)]"
-    : "bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.65)]";
+function getStatusMeta(service: Service) {
+  if (!service.isAvailable) {
+    return {
+      label: "indisponivel",
+      tone: "bg-slate-400 shadow-none",
+    };
+  }
+
+  return service.status === "running"
+    ? {
+        label: "running",
+        tone: "bg-emerald-400 shadow-[0_0_18px_rgba(74,222,128,0.75)]",
+      }
+    : {
+        label: service.status,
+        tone: "bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.65)]",
+      };
 }
 
 function getUrlSourceCopy(urlSource: ServiceUrlSource) {
@@ -76,7 +89,6 @@ export default function Home() {
       const response = await fetch("/api/services", {
         cache: "no-store",
       });
-
       const payload = await response.json();
 
       if (!response.ok) {
@@ -92,13 +104,11 @@ export default function Home() {
         updatedAt: new Date().toLocaleTimeString("pt-BR"),
       });
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Falha inesperada ao consultar a API.";
-
       setFetchState({
-        error: message,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Falha inesperada ao consultar a API.",
         loading: false,
         updatedAt: null,
       });
@@ -109,19 +119,6 @@ export default function Home() {
     () => services.find((service) => service.id === editingServiceId) ?? null,
     [editingServiceId, services],
   );
-
-  const startEditing = useCallback((service: Service) => {
-    setEditingServiceId(service.id);
-    setControlsServiceId(service.id);
-    setUrlDraft(service.url || service.autoUrl || "");
-    setSaveState({ error: null, serviceId: null });
-  }, []);
-
-  const cancelEditing = useCallback(() => {
-    setEditingServiceId(null);
-    setUrlDraft("");
-    setSaveState({ error: null, serviceId: null });
-  }, []);
 
   const openControlsWithDelay = useCallback(
     (serviceId: string) => {
@@ -147,15 +144,25 @@ export default function Home() {
     [clearHoldTimer, holdServiceId],
   );
 
+  const cancelEditing = useCallback(() => {
+    setEditingServiceId(null);
+    setUrlDraft("");
+    setSaveState({ error: null, serviceId: null });
+  }, []);
+
   const closeControls = useCallback(() => {
     setControlsServiceId(null);
     setHoldServiceId(null);
     clearHoldTimer();
+    cancelEditing();
+  }, [cancelEditing, clearHoldTimer]);
 
-    if (editingServiceId) {
-      cancelEditing();
-    }
-  }, [cancelEditing, clearHoldTimer, editingServiceId]);
+  const startEditing = useCallback((service: Service) => {
+    setEditingServiceId(service.id);
+    setControlsServiceId(service.id);
+    setUrlDraft(service.url || service.autoUrl || "");
+    setSaveState({ error: null, serviceId: null });
+  }, []);
 
   const saveManualUrl = useCallback(async () => {
     if (!editingService) {
@@ -175,7 +182,6 @@ export default function Home() {
           url: urlDraft,
         }),
       });
-
       const payload = await response.json();
 
       if (!response.ok) {
@@ -208,7 +214,6 @@ export default function Home() {
           },
           body: JSON.stringify({ serviceId }),
         });
-
         const payload = await response.json();
 
         if (!response.ok) {
@@ -218,11 +223,6 @@ export default function Home() {
         }
 
         await loadServices();
-
-        if (editingServiceId === serviceId) {
-          cancelEditing();
-        }
-
         setSaveState({ error: null, serviceId: null });
       } catch (error) {
         setSaveState({
@@ -234,7 +234,92 @@ export default function Home() {
         });
       }
     },
-    [cancelEditing, editingServiceId, loadServices],
+    [loadServices],
+  );
+
+  const reorderServices = useCallback(
+    async (serviceId: string, direction: -1 | 1) => {
+      const currentIndex = services.findIndex((service) => service.id === serviceId);
+      const targetIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= services.length) {
+        return;
+      }
+
+      const orderedIds = services.map((service) => service.id);
+      [orderedIds[currentIndex], orderedIds[targetIndex]] = [
+        orderedIds[targetIndex],
+        orderedIds[currentIndex],
+      ];
+
+      setSaveState({ error: null, serviceId });
+
+      try {
+        const response = await fetch("/api/services", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "reorder",
+            orderedServiceIds: orderedIds,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload?.error || "Falha ao reordenar os servicos.");
+        }
+
+        setServices(Array.isArray(payload) ? payload : services);
+        setSaveState({ error: null, serviceId: null });
+      } catch (error) {
+        setSaveState({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Falha inesperada ao reordenar os servicos.",
+          serviceId,
+        });
+      }
+    },
+    [services],
+  );
+
+  const applyMissingAction = useCallback(
+    async (serviceId: string, action: "hide" | "remove") => {
+      setSaveState({ error: null, serviceId });
+
+      try {
+        const response = await fetch("/api/services", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action,
+            serviceId,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload?.error || "Falha ao atualizar o servico.");
+        }
+
+        await loadServices();
+        closeControls();
+      } catch (error) {
+        setSaveState({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Falha inesperada ao atualizar o servico.",
+          serviceId,
+        });
+      }
+    },
+    [closeControls, loadServices],
   );
 
   useEffect(() => {
@@ -264,9 +349,8 @@ export default function Home() {
                   Painel central para os servicos do seu servidor Docker
                 </h1>
                 <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-                  Descoberta automatica por labels, prioridade para o proxy
-                  reverso e override manual quando voce precisar corrigir uma
-                  URL sem recriar o container.
+                  Ordenacao persistente, prioridade para o proxy reverso e
+                  retencao visual dos servicos que deixaram de existir.
                 </p>
               </div>
             </div>
@@ -312,48 +396,22 @@ export default function Home() {
         ) : null}
 
         <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {fetchState.loading && services.length === 0
-            ? Array.from({ length: 3 }).map((_, index) => (
-                <div
-                  className="overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur"
-                  key={`skeleton-${index}`}
-                >
-                  <div className="animate-pulse space-y-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-center gap-4">
-                        <div className="h-14 w-14 rounded-2xl bg-white/10" />
-                        <div className="space-y-2">
-                          <div className="h-4 w-32 rounded-full bg-white/10" />
-                          <div className="h-3 w-40 rounded-full bg-white/5" />
-                        </div>
-                      </div>
-                      <div className="h-8 w-24 rounded-full bg-white/10" />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="h-3 rounded-full bg-white/5" />
-                      <div className="h-3 rounded-full bg-white/5" />
-                      <div className="h-3 w-3/4 rounded-full bg-white/5" />
-                    </div>
-                  </div>
-                </div>
-              ))
-            : null}
-
-          {services.map((service) => {
-            const isReady = Boolean(service.url);
-            const urlSource = getUrlSourceCopy(service.urlSource);
+          {services.map((service, index) => {
+            const isReady = service.isAvailable && Boolean(service.url);
             const isEditing = editingServiceId === service.id;
-            const areControlsOpen = controlsServiceId === service.id;
             const isHolding = holdServiceId === service.id;
+            const areControlsOpen = controlsServiceId === service.id;
             const isSaving = saveState.serviceId === service.id;
+            const statusMeta = getStatusMeta(service);
+            const urlSource = getUrlSourceCopy(service.urlSource);
 
             return (
               <article
                 className={[
-                  "group relative overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] p-6 backdrop-blur transition duration-200",
-                  isReady
-                    ? "hover:-translate-y-1 hover:border-sky-300/30 hover:bg-slate-900/90 hover:shadow-glow"
-                    : "opacity-85",
+                  "group relative overflow-hidden rounded-[28px] border p-6 backdrop-blur transition duration-200",
+                  service.isAvailable
+                    ? "border-white/10 bg-[var(--panel)] hover:-translate-y-1 hover:border-sky-300/30 hover:bg-slate-900/90 hover:shadow-glow"
+                    : "border-white/5 bg-slate-900/45 grayscale",
                 ].join(" ")}
                 key={service.id}
               >
@@ -367,7 +425,9 @@ export default function Home() {
                   />
                 ) : null}
 
-                <div className="pointer-events-none absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
+                {service.isAvailable ? (
+                  <div className="pointer-events-none absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%)] opacity-0 transition group-hover:opacity-100" />
+                ) : null}
 
                 <div className="relative z-10 flex h-full flex-col gap-5 pointer-events-none">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -389,9 +449,9 @@ export default function Home() {
                     <div className="flex shrink-0 flex-wrap items-center gap-2 xl:max-w-[42%] xl:justify-end">
                       <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-slate-300">
                         <span
-                          className={`h-2.5 w-2.5 rounded-full ${getStatusStyle(service.status)}`}
+                          className={`h-2.5 w-2.5 rounded-full ${statusMeta.tone}`}
                         />
-                        {service.status}
+                        {statusMeta.label}
                       </span>
                       <span
                         className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${urlSource.tone}`}
@@ -402,7 +462,9 @@ export default function Home() {
                   </div>
 
                   <p className="text-sm leading-7 text-slate-300">
-                    {service.description}
+                    {service.isAvailable
+                      ? service.description
+                      : "Servico ausente no Docker. Mantendo o ultimo snapshot conhecido para revisao manual."}
                   </p>
 
                   <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
@@ -412,21 +474,20 @@ export default function Home() {
                     <p className="mt-2 break-all text-sm text-slate-200">
                       {service.url || "URL nao configurada"}
                     </p>
-                    {service.autoUrl ? (
+                    {service.isAvailable && service.autoUrl ? (
                       <p className="mt-2 break-all text-xs text-slate-400">
                         Automatico: {service.autoUrl}
                       </p>
-                    ) : (
-                      <p className="mt-2 text-xs text-slate-500">
-                        Defina `hub.url` ou `hub.host`/`hub.domain` para usar a
-                        URL do proxy reverso automaticamente.
-                      </p>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="mt-auto flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
                     <span className="text-slate-400">
-                      {isReady ? "Clique em qualquer area do card para abrir." : "Configure uma URL para ativar o acesso."}
+                      {service.isAvailable
+                        ? isReady
+                          ? "Clique em qualquer area do card para abrir."
+                          : "Configure uma URL para ativar o acesso."
+                        : "Sem links ativos. Apenas esconder ou remover."}
                     </span>
 
                     <button
@@ -449,10 +510,14 @@ export default function Home() {
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="text-sm font-semibold text-white">
-                              Configuracao de URL
+                              {service.isAvailable
+                                ? "Configuracao do servico"
+                                : "Servico ausente"}
                             </p>
                             <p className="mt-1 text-sm text-slate-300">
-                              O card continua priorizando o proxy reverso automaticamente, mas voce pode sobrescrever a URL manualmente.
+                              {service.isAvailable
+                                ? "A ordem e a URL manual persistem mesmo apos reiniciar o hub."
+                                : "Este servico nao existe mais no Docker. Voce pode esconder o card ou remover o registro persistido."}
                             </p>
                           </div>
 
@@ -465,79 +530,105 @@ export default function Home() {
                           </button>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
-                            onClick={() => startEditing(service)}
-                            type="button"
-                          >
-                            Editar URL
-                          </button>
-                          <button
-                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                            disabled={service.urlSource !== "manual" || isSaving}
-                            onClick={() => void resetToAutomaticUrl(service.id)}
-                            type="button"
-                          >
-                            Usar automatico
-                          </button>
-                        </div>
-
-                        {isEditing ? (
-                          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                            <div className="space-y-3">
-                              <label className="block">
-                                <span className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-400">
-                                  URL manual
-                                </span>
-                                <input
-                                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
-                                  onChange={(event) => setUrlDraft(event.target.value)}
-                                  placeholder={
-                                    service.autoUrl ||
-                                    "https://servico.seudominio.com.br"
-                                  }
-                                  value={urlDraft}
-                                />
-                              </label>
-
-                              {service.autoUrl ? (
-                                <p className="break-all text-xs text-slate-400">
-                                  URL automatica detectada: {service.autoUrl}
-                                </p>
-                              ) : (
-                                <p className="text-xs text-slate-400">
-                                  Dica: use `hub.url=https://app.seudominio.com.br` ou `hub.host=app.seudominio.com.br` para priorizar o proxy reverso.
-                                </p>
-                              )}
-
-                              {saveState.error &&
-                              saveState.serviceId === service.id ? (
-                                <p className="text-sm text-rose-200">
-                                  {saveState.error}
-                                </p>
-                              ) : null}
-
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
-                                  disabled={isSaving || !urlDraft.trim()}
-                                  onClick={() => void saveManualUrl()}
-                                  type="button"
-                                >
-                                  {isSaving ? "Salvando..." : "Salvar URL"}
-                                </button>
-                                <button
-                                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-                                  onClick={cancelEditing}
-                                  type="button"
-                                >
-                                  Cancelar
-                                </button>
-                              </div>
-                            </div>
-                          </div>
+                        {saveState.error && saveState.serviceId === service.id ? (
+                          <p className="text-sm text-rose-200">{saveState.error}</p>
                         ) : null}
+
+                        {service.isAvailable ? (
+                          <>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={index === 0 || isSaving}
+                                onClick={() => void reorderServices(service.id, -1)}
+                                type="button"
+                              >
+                                Mover antes
+                              </button>
+                              <button
+                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={index === services.length - 1 || isSaving}
+                                onClick={() => void reorderServices(service.id, 1)}
+                                type="button"
+                              >
+                                Mover depois
+                              </button>
+                              <button
+                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-sky-300/30 hover:bg-white/10"
+                                onClick={() => startEditing(service)}
+                                type="button"
+                              >
+                                Editar URL
+                              </button>
+                              <button
+                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={service.urlSource !== "manual" || isSaving}
+                                onClick={() => void resetToAutomaticUrl(service.id)}
+                                type="button"
+                              >
+                                Usar automatico
+                              </button>
+                            </div>
+
+                            {isEditing ? (
+                              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                                <div className="space-y-3">
+                                  <label className="block">
+                                    <span className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-400">
+                                      URL manual
+                                    </span>
+                                    <input
+                                      className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
+                                      onChange={(event) => setUrlDraft(event.target.value)}
+                                      placeholder={
+                                        service.autoUrl ||
+                                        "https://servico.seudominio.com.br"
+                                      }
+                                      value={urlDraft}
+                                    />
+                                  </label>
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                                      disabled={isSaving || !urlDraft.trim()}
+                                      onClick={() => void saveManualUrl()}
+                                      type="button"
+                                    >
+                                      {isSaving ? "Salvando..." : "Salvar URL"}
+                                    </button>
+                                    <button
+                                      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+                                      onClick={cancelEditing}
+                                      type="button"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-300/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={isSaving}
+                              onClick={() => void applyMissingAction(service.id, "hide")}
+                              type="button"
+                            >
+                              Esconder
+                            </button>
+                            <button
+                              className="rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-100 transition hover:border-rose-300/40 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={isSaving}
+                              onClick={() => void applyMissingAction(service.id, "remove")}
+                              type="button"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : null}

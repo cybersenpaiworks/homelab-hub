@@ -8,3 +8,4 @@ pnpm-debug.log*
 dist
 .codex
 data/service-overrides.json
+data/service-state.json

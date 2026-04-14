@@ -3,6 +3,7 @@ export type ServiceUrlSource = "manual" | "label" | "derived" | "none";
 
 export type Service = {
   id: string;
+  containerId: string | null;
   name: string;
   url: string;
   autoUrl: string;
@@ -10,4 +11,5 @@ export type Service = {
   icon: string;
   description: string;
   status: ServiceStatus;
+  isAvailable: boolean;
 };
